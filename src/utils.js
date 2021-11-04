@@ -11,11 +11,13 @@ module.exports = {
     computeSchemaDifferences,
     deepCopy,
     convert,
+    stream,
     isEmptyField,
     removeEmptyFields,
     getNCharacters,
     unwind,
     isInvalid,
+    delay,
 
     // underscore replacements:
     isString,
@@ -114,6 +116,28 @@ function convert(params) {
         });
 
     if (valid) converter.convert(params.data, callback);
+}
+
+/**
+ * Abstracted function to perform the streaming conversion of json-->csv or csv-->json
+ * depending on the converter class that is passed via the params object
+ * @param params {Object}
+ */
+function stream(params) {
+    let {options} = parseArguments(params.options);
+    options = buildOptions(options);
+
+    let converter = new params.converter(options),
+
+        // Validate the parameters before calling the converter's convert function
+        valid = validateParameters({
+            data: params.data,
+            callback: () => {},
+            errorMessages: converter.validationMessages,
+            dataCheckFn: converter.validationFn
+        });
+
+    return valid ? converter.stream(params.data) : null;
 }
 
 /**
@@ -295,4 +319,12 @@ function flatten(array) {
 function isInvalid(parsedJson) {
     return parsedJson === Infinity ||
         parsedJson === -Infinity;
+}
+
+function delay(ms, shouldReject = false) {
+    return new Promise((resolve, reject) => {
+        setTimeout(() => {
+            shouldReject ? resolve('') : reject('ERR_TIMEOUT');
+        }, ms);
+    });
 }

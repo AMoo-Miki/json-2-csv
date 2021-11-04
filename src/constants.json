@@ -33,7 +33,8 @@
     "checkSchemaDifferences": false,
     "expandArrayObjects": false,
     "unwindArrays": false,
-    "useLocaleFormat": false
+    "useLocaleFormat": false,
+    "streamTimeout": 30000
   },
 
   "values" : {

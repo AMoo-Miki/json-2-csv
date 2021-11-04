@@ -3,7 +3,9 @@
 let path = require('doc-path'),
     deeks = require('deeks'),
     constants = require('./constants.json'),
-    utils = require('./utils');
+    utils = require('./utils'),
+    Stream = require('stream'),
+    Events = require('events');
 
 const Json2Csv = function(options) {
     const wrapDelimiterCheckRegex = new RegExp(options.delimiter.wrap, 'g'),
@@ -145,9 +147,18 @@ const Json2Csv = function(options) {
                 .then(sortHeaderFields);
         }
 
-        return getFieldNameList(data)
-            .then(processSchemas)
+        return processDataFields(data)
             .then(sortHeaderFields);
+    }
+
+    async function processDataFields(data) {
+        const schemas = [],
+            chunkSize = 1000;
+        for (let i = 0, len = data.length; i < len; i += chunkSize) {
+            schemas.push(await processSchemas(await getFieldNameList(data.slice(i, i + chunkSize))));
+        }
+
+        return processSchemas(schemas);
     }
 
     /** RECORD FIELD FUNCTIONS **/
@@ -384,8 +395,62 @@ const Json2Csv = function(options) {
             .catch(callback);
     }
 
+    function stream(data) {
+        if (utils.isObject(data) && !data.length) {
+            data = [data]; // Convert to an array of the given document
+        }
+
+        const stream = new Stream.PassThrough();
+        // stream.allowHalfOpen = true;
+        stream.pause();
+
+        process.nextTick(async() => {
+            let {headerFields, records} = await unwindRecordsIfNecessary({
+                headerFields: await retrieveHeaderFields(data),
+                records: data
+            });
+
+            if (options.excelBOM) stream.write(constants.values.excelBOM);
+            if (options.prependHeader) {
+                // Shallow copy of headerFields
+                let ProcessedHeaderFields = Object.assign([], headerFields);
+
+                ({headerFields: ProcessedHeaderFields} = await wrapHeaderFields({headerFields: ProcessedHeaderFields}));
+                ({headerFields: ProcessedHeaderFields} = await trimHeaderFields({headerFields: ProcessedHeaderFields}));
+                const {header} = await generateCsvHeader({headerFields: ProcessedHeaderFields});
+
+                stream.write(header + options.delimiter.eol);
+            }
+
+            const lastRecord = records.pop();
+
+            while (records.length > 0) {
+                const recordChunk = records.splice(0, 1000),
+                    {records: chunk} = await processRecords({records: recordChunk, headerFields});
+                if (!stream.write(chunk + options.delimiter.eol)) {
+                    await streamDrainWithTimeout(stream, options.streamTimeout);
+                }
+            }
+
+            const {records: chunk} = await processRecords({records: [lastRecord], headerFields});
+            stream.write(chunk);
+
+            stream.end();
+        });
+
+        return stream;
+    }
+
+    async function streamDrainWithTimeout(stream, timeout) {
+        return Promise.race([
+            utils.delay(timeout || constants.defaultOptions.streamTimeout, true),
+            await Events.once(stream, 'drain')
+        ]);
+    }
+
     return {
         convert,
+        stream,
         validationFn: utils.isObject,
         validationMessages: constants.errors.json2csv
     };
